@@ -1,136 +1,110 @@
-# -*- coding: utf-8 -*-
-
 """
-    radish
-    ~~~~~~
+radish
+~~~~~~
 
-    Behavior Driven Development tool for Python - the root from red to green
+The root from red to green. BDD tooling for Python.
 
-    Copyright: MIT, Timo Furrer <tuxtimo@gmail.com>
+:copyright: (c) 2019 by Timo Furrer <tuxtimo@gmail.com>
+:license: MIT, see LICENSE for more details.
 """
 
 import pytest
 
-from radish.model import Tag
-from radish.hookregistry import before, after
-import radish.exceptions as errors
+from radish.hookregistry import HookRegistry, HookImpl
 
 
-def test_available_hooks():
-    """
-    Test that all expected hooks are available
-    """
-    # then
-    assert callable(before.all)
-    assert callable(after.all)
-
-    assert callable(before.each_feature)
-    assert callable(after.each_feature)
-
-    assert callable(before.each_scenario)
-    assert callable(after.each_scenario)
-
-    assert callable(before.each_step)
-    assert callable(after.each_step)
-
-
-def test_registering_simple_hook(hookregistry):
-    """
-    Test registering simple hooks
-    """
-    # given & when
-    @before.all
-    def before_all_hook_legacy():
-        pass
-
-    @before.all()
-    def before_all_hook():
-        pass
-
-    # then
-    assert len(hookregistry.hooks["all"]["before"]) == 2
-
-
-def test_call_hook(hookregistry, mocker):
-    """
-    Test calling registered hooks
-    """
-    # given
-    @before.all()
-    def before_all(features, stub):
-        stub()
-
-    @before.each_step()
-    def before_each_step(step, stub):
-        stub()
-
-    hook_call_stub = mocker.stub()
-
-    # when & then
-    hookregistry.call("before", "all", mocker.MagicMock(), hook_call_stub)
-    assert hook_call_stub.call_count == 1
-
-    hookregistry.call("before", "each_step", mocker.MagicMock(), hook_call_stub)
-    assert hook_call_stub.call_count == 2
-
-
-def test_call_hook_exception(hookregistry, mocker):
-    """
-    Test calling registered hook which raises an exception
-    """
-    # given
-    @before.all()
-    def before_all(features):
-        raise AssertionError("some error")
-
+@pytest.mark.parametrize(
+    "hook_1, hook_2, expect_equal",
+    [
+        (
+            HookImpl("what", "when", None, [], 1),
+            HookImpl("what", "when", None, [], 1),
+            True,
+        ),
+        (
+            HookImpl("what", "when", None, [], 1),
+            HookImpl("", "when", None, [], 1),
+            False,
+        ),
+        (
+            HookImpl("what", "when", None, [], 1),
+            HookImpl("what", "", None, [], 1),
+            False,
+        ),
+        (
+            HookImpl("what", "when", None, [], 1),
+            HookImpl("what", "when", lambda x: x, [], 1),
+            False,
+        ),
+        (
+            HookImpl("what", "when", None, [], 1),
+            HookImpl("what", "when", None, [1], 1),
+            False,
+        ),
+        (
+            HookImpl("what", "when", None, [], 1),
+            HookImpl("what", "when", None, [], 2),
+            False,
+        ),
+    ],
+)
+def test_hookimpls_can_be_compared_by_equality(hook_1, hook_2, expect_equal):
+    """The ``HookImpl``s can be compared for their equality"""
     # when
-    with pytest.raises(errors.HookError) as exc:
-        hookregistry.call("before", "all", mocker.MagicMock())
+    are_equal = hook_1 == hook_2
 
     # then
-    assert exc.match(r".*AssertionError: some error")
+    assert are_equal == expect_equal
 
 
-def test_call_hooks_filtered_by_tags(hookregistry, mocker):
-    """
-    Test calling filtered hooks by tags
-    """
+def test_hookimpls_can_be_sorted_by_the_order():
+    """The ``HookImpl``s can be sorted by it's order"""
     # given
-    @after.all()
-    def generic_cleanup(features, stub):
-        stub()
-
-    @after.all(on_tags="bad_case")
-    def bad_case_cleanup(features, stub):
-        stub()
-
-    @after.all(on_tags="good_case")
-    def good_case_cleanup(features, stub):
-        stub()
-
-    hook_call_stub = mocker.stub()
-    model = mocker.MagicMock(all_tags=[])
-
-    models = [
-        mocker.MagicMock(all_tags=[Tag(name="good_case")]),
-        mocker.MagicMock(all_tags=[Tag(name="bad_case")]),
+    hooks = [
+        HookImpl("what", "when", None, [], 1),
+        HookImpl("what", "when", None, [], 10),
+        HookImpl("what", "when", None, [], 5),
+        HookImpl("what", "when", None, [], 2),
+        HookImpl("what", "when", None, [], 30),
+        HookImpl("what", "when", None, [], 8),
+        HookImpl("what", "when", None, [], 7),
     ]
 
-    # when & then
-    # all tags
-    hookregistry.call("after", "all", model, hook_call_stub)
-    assert hook_call_stub.call_count == 1
+    # when
+    sorted_hooks = sorted(hooks)
 
-    # only generic & good case
-    model.all_tags = [Tag(name="good_case")]
-    hookregistry.call("after", "all", model, hook_call_stub)
-    assert hook_call_stub.call_count == 3
+    # then
+    assert sorted_hooks == [
+        HookImpl("what", "when", None, [], 1),
+        HookImpl("what", "when", None, [], 2),
+        HookImpl("what", "when", None, [], 5),
+        HookImpl("what", "when", None, [], 7),
+        HookImpl("what", "when", None, [], 8),
+        HookImpl("what", "when", None, [], 10),
+        HookImpl("what", "when", None, [], 30),
+    ]
 
-    # only generic & bad case
-    model.all_tags = [Tag(name="bad_case")]
-    hookregistry.call("after", "all", model, hook_call_stub)
-    assert hook_call_stub.call_count == 5
 
-    # good case & bad case because of model list
-    hookregistry.call("after", "all", models, hook_call_stub)
-    assert hook_call_stub.call_count == 8
+def test_hookregistry_module_should_have_global_registry_instance():
+    """The radish.hookregistry module should contain a global HookRegistry instance"""
+    # given & when
+    from radish.hookregistry import registry
+
+    # then
+    assert isinstance(registry, HookRegistry)
+
+
+def test_hookregistry_module_should_have_global_hook_decorators():
+    """The radish.hookregistry module should contain functions for the Hook decorators"""
+    # given & when
+    from radish.hookregistry import before, after
+
+    # then
+    assert callable(before.all)
+    assert callable(before.each_feature)
+    assert callable(before.each_scenario)
+    assert callable(before.each_step)
+    assert callable(after.all)
+    assert callable(after.each_feature)
+    assert callable(after.each_scenario)
+    assert callable(after.each_step)

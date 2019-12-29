@@ -1,298 +1,265 @@
-# -*- coding: utf-8 -*-
-
 """
-    radish
-    ~~~~~~
+radish
+~~~~~~
 
-    Behavior Driven Development tool for Python - the root from red to green
+The root from red to green. BDD tooling for Python.
 
-    Copyright: MIT, Timo Furrer <tuxtimo@gmail.com>
+:copyright: (c) 2019 by Timo Furrer <tuxtimo@gmail.com>
+:license: MIT, see LICENSE for more details.
 """
-
-import re
 
 import pytest
 
-from radish.stepregistry import step, steps
-from radish.stepregistry import given, when, then
-import radish.exceptions as errors
+from radish.stepregistry import StepImpl, StepRegistry
 
 
-def test_registering_simple_steps(stepregistry):
-    """
-    Test registering simple Step functions
-    """
-    # given
-    def step_a():
-        pass
-
-    def step_b():
-        pass
-
+@pytest.mark.parametrize(
+    "step_impl_1, step_impl_2, expected_equal",
+    [
+        (StepImpl("Given", "pattern", None), StepImpl("Given", "pattern", None), True),
+        (StepImpl("Given", "pattern", None), StepImpl("", "pattern", None), False),
+        (StepImpl("Given", "pattern", None), StepImpl("Given", "", None), False),
+        (
+            StepImpl("Given", "pattern", None),
+            StepImpl("Given", "pattern", lambda x: x),
+            False,
+        ),
+        (StepImpl("Given", "pattern", None), None, False),
+    ],
+    ids=[
+        "are equal",
+        "keyword is not equal",
+        "pattern is not equal",
+        "func is not equal",
+        "right hand side object is no StepImpl object",
+    ],
+)
+def test_step_impl_should_implement_the_equals_protocol(
+    step_impl_1, step_impl_2, expected_equal
+):
+    """Test that StepImpls correctly implement the equals protocol"""
     # when
-    stepregistry.register("step_pattern_a", step_a)
-    stepregistry.register("step_pattern_b", step_b)
+    are_equal = step_impl_1 == step_impl_2
+    hash_equal = hash(step_impl_1) == hash(step_impl_2)
 
     # then
-    assert len(stepregistry.steps) == 2
-    assert stepregistry.steps["step_pattern_a"] == step_a
-    assert stepregistry.steps["step_pattern_b"] == step_b
+    assert are_equal == expected_equal
+    assert hash_equal == expected_equal
 
 
-def test_registering_step_pattern_twice(stepregistry):
-    """
-    Test registering the same Step pattern twice
-    """
-    # given
-    def step_a():
-        pass
-
-    def step_b():
-        pass
-
-    stepregistry.register("step_pattern_a", step_a)
-
-    # when
-    with pytest.raises(errors.SameStepError) as exc:
-        stepregistry.register("step_pattern_a", step_b)
+def test_stepregistry_is_initialized_with_no_step_impls():
+    """The StepRegistry should be initialized with no registered Step Implementations"""
+    # given & when
+    registry = StepRegistry()
 
     # then
-    assert str(exc.value).startswith(
-        "Cannot register step step_b with regex 'step_pattern_a' because it is already used by step step_a"
+    assert registry.step_implementations() == {}
+
+
+def test_stepregistry_should_allow_to_register_step_impls():
+    """The StepRegistry should allow to register a Step Implementation"""
+    # given
+    registry = StepRegistry()
+
+    # when
+    registry.register("Given", "pattern", None)
+
+    # then
+    assert registry.step_implementations("Given") == [
+        StepImpl("Given", "pattern", None)
+    ]
+
+
+def test_stepregistry_should_gracefully_accept_double_registration():
+    """
+    The StepRegistry should gracefully accept a duplicate registration of a Step Implementation
+    """
+    # given
+    registry = StepRegistry()
+    registry.register("Given", "pattern", None)
+
+    # when
+    registry.register("Given", "pattern", None)
+
+    # then
+    assert registry.step_implementations("Given") == [
+        StepImpl("Given", "pattern", None)
+    ]
+
+
+def test_stepregistry_should_create_one_step_decorator_per_keyword():
+    """The StepRegistry should create one Step decorator for each keyword"""
+    # given
+    registry = StepRegistry()
+    context = {}
+
+    # when
+    registry.create_step_decorators(context)
+
+    # then
+    assert len(context) == 4
+    assert "given" in context
+    assert "when" in context
+    assert "then" in context
+    assert "step" in context
+
+
+@pytest.mark.parametrize("keyword", ["Given", "When", "Then"])
+def test_stepregistry_step_decorator_should_register_func_with_proper_keyword(keyword):
+    """The StepRegistry should create one Step decorator for each keyword"""
+    # given
+    registry = StepRegistry()
+    context = {}
+    registry.create_step_decorators(context)
+
+    # when
+    def test_step():
+        ...
+
+    test_step = context[keyword.lower()]("pattern")(test_step)
+
+    # then
+    assert registry.step_implementations(keyword) == [
+        StepImpl(keyword, "pattern", test_step)
+    ]
+
+
+def test_stepregitry_register_func_with_multiple_decorators():
+    """The StepRegistry should allow a function to be registered with multiple Step decorators"""
+    # given
+    registry = StepRegistry()
+    context = {}
+    registry.create_step_decorators(context)
+
+    # when
+    def test_step():
+        ...
+
+    test_step = context["given"]("pattern")(test_step)
+    test_step = context["when"]("pattern")(test_step)
+
+    # then
+    assert registry.step_implementations("Given") == [
+        StepImpl("Given", "pattern", test_step)
+    ]
+    assert registry.step_implementations("When") == [
+        StepImpl("When", "pattern", test_step)
+    ]
+
+
+def test_stepregitry_step_decorators_for_all_keywords():
+    """The StepRegistry should return the Step Implementations registered
+    with the ``step`` decorator for all keywords.
+    """
+    # given
+    registry = StepRegistry()
+    context = {}
+    registry.create_step_decorators(context)
+
+    # when
+    def test_step():
+        ...
+
+    test_step = context["step"]("pattern")(test_step)
+
+    # then
+    assert registry.step_implementations("Given") == [
+        StepImpl("Step", "pattern", test_step)
+    ]
+
+
+def test_stepregistry_module_should_have_global_registry_instance():
+    """The radish.stepregistry module should contain a global StepRegistry instance"""
+    # given & when
+    from radish.stepregistry import registry
+
+    # then
+    assert isinstance(registry, StepRegistry)
+
+
+def test_stepregistry_module_should_have_global_step_decorators():
+    """The radish.stepregistry module should contain functions for the Step decorators"""
+    # given & when
+    from radish.stepregistry import given, when, then, step
+
+    # then
+    assert callable(given)
+    assert callable(when)
+    assert callable(then)
+    assert callable(step)
+
+
+def test_stepregistry_module_level_given_decorator_register_at_global_registry_instance():
+    """
+    The global module-level given-Step decorators should register
+    a Step at the global registry instance
+    """
+    # given
+    from radish.stepregistry import registry, given
+
+    # when
+    @given("pattern")
+    def given_step():
+        ...
+
+    # then
+    assert StepImpl("Given", "pattern", given_step) in registry.step_implementations(
+        "Given"
     )
 
 
-def test_registering_steps_via_object(stepregistry):
+def test_stepregistry_module_level_when_decorator_register_at_global_registry_instance():
     """
-    Test registering Steps via object
-    """
-    # given
-    class MySteps(object):
-        def some_step(self):
-            """When I call some step"""
-
-        def some_other_step(self):
-            """
-            I do some stuff
-
-            This is not part of the step pattern
-            """
-
-    # when
-    steps_object = MySteps()
-    stepregistry.register_object(steps_object)
-
-    # then
-    assert len(stepregistry.steps) == 2
-    assert stepregistry.steps["When I call some step"] == steps_object.some_step
-    assert stepregistry.steps["I do some stuff"] == steps_object.some_other_step
-
-
-def test_ignore_methods_registering_object(stepregistry):
-    """
-    Test ignoring methods when registering an object
+    The global module-level when-Step decorators should register
+    a Step at the global registry instance
     """
     # given
-    class MySteps(object):
-        ignore = ["some_method"]
-
-        def some_step(self):
-            """When I call some step"""
-
-        def some_method(self):
-            pass
+    from radish.stepregistry import registry, when
 
     # when
-    steps_object = MySteps()
-    stepregistry.register_object(steps_object)
+    @when("pattern")
+    def when_step():
+        ...
 
     # then
-    assert len(stepregistry.steps) == 1
-    assert stepregistry.steps["When I call some step"] == steps_object.some_step
-
-
-def test_error_if_no_step_regex_given_for_object(stepregistry):
-    """
-    Test error if a step method in object has no regex
-    """
-    # given
-    class MySteps(object):
-        def some_step(self):
-            pass
-
-    # when
-    steps_object = MySteps()
-
-    with pytest.raises(errors.RadishError) as exc:
-        stepregistry.register_object(steps_object)
-
-    # then
-    assert (
-        str(exc.value)
-        == "Step definition 'some_step' from class must have step regex in docstring"
+    assert StepImpl("When", "pattern", when_step) in registry.step_implementations(
+        "When"
     )
 
 
-def test_invalid_regex_step_pattern_in_method_docstring(stepregistry):
+def test_stepregistry_module_level_then_decorator_register_at_global_registry_instance():
     """
-    Test invalid regex Step pattern in method docstring
+    The global module-level then-Step decorators should register
+    a Step at the global registry instance
     """
     # given
-    class MySteps(object):
-        def some_step(self):
-            """
-            So (( invalid )(
-            """
+    from radish.stepregistry import registry, then
 
     # when
-    steps_object = MySteps()
-
-    with pytest.raises(errors.StepRegexError) as exc:
-        stepregistry.register_object(steps_object)
+    @then("pattern")
+    def then_step():
+        ...
 
     # then
-    assert str(exc.value).startswith(
-        "Cannot compile regex 'So (( invalid )(' from step"
+    assert StepImpl("Then", "pattern", then_step) in registry.step_implementations(
+        "Then"
     )
 
 
-@pytest.mark.parametrize(
-    "pattern",
-    ["I do some stuff", re.compile("I do some stuff")],
-    ids=["Step with Step Pattern", "Step with Regex"],
-)
-def test_registering_step_function_via_step_decorator(pattern, stepregistry):
+def test_stepregistry_module_level_step_decorator_register_at_global_registry_instance():
     """
-    Test registering Step function via step decorator
-    """
-    # given & when
-    @step(pattern)
-    def step_a(step):
-        pass
-
-    # then
-    assert len(stepregistry.steps) == 1
-    assert stepregistry.steps[pattern] == step_a
-
-
-@pytest.mark.parametrize(
-    "pattern, expected_pattern",
-    [
-        ("I do some stuff", "Given I do some stuff"),
-        (re.compile("I do some stuff"), re.compile("Given I do some stuff")),
-    ],
-    ids=["Step with Step Pattern", "Step with Regex"],
-)
-def test_registering_step_function_via_given_decorator(
-    pattern, expected_pattern, stepregistry
-):
-    """
-    Test registering Step function via given decorator
-    """
-    # given & when
-    @given(pattern)
-    def step_a(step):
-        pass
-
-    # then
-    assert len(stepregistry.steps) == 1
-    assert stepregistry.steps[expected_pattern] == step_a
-
-
-@pytest.mark.parametrize(
-    "pattern, expected_pattern",
-    [
-        ("I do some stuff", "When I do some stuff"),
-        (re.compile("I do some stuff"), re.compile("When I do some stuff")),
-    ],
-    ids=["Step with Step Pattern", "Step with Regex"],
-)
-def test_registering_step_function_via_when_decorator(
-    pattern, expected_pattern, stepregistry
-):
-    """
-    Test registering Step function via when decorator
-    """
-    # given & when
-    @when(pattern)
-    def step_a(step):
-        pass
-
-    # then
-    assert len(stepregistry.steps) == 1
-    assert stepregistry.steps[expected_pattern] == step_a
-
-
-@pytest.mark.parametrize(
-    "pattern, expected_pattern",
-    [
-        ("I do some stuff", "Then I do some stuff"),
-        (re.compile("I do some stuff"), re.compile("Then I do some stuff")),
-    ],
-    ids=["Step with Step Pattern", "Step with Regex"],
-)
-def test_registering_step_function_via_then_decorator(
-    pattern, expected_pattern, stepregistry
-):
-    """
-    Test registering Step function via then decorator
-    """
-    # given & when
-    @then(pattern)
-    def step_a(step):
-        pass
-
-    # then
-    assert len(stepregistry.steps) == 1
-    assert stepregistry.steps[expected_pattern] == step_a
-
-
-def test_registering_steps_from_object_via_steps_decorator(stepregistry):
-    """
-    Test registering Steps from object via steps decorator
-    """
-    # given & when
-    @steps
-    class MySteps(object):
-        def some_step(self):
-            """When I call some step"""
-
-        def some_other_step(self):
-            """
-            I do some stuff
-
-            This is not part of the step pattern
-            """
-
-    # then
-    assert len(stepregistry.steps) == 2
-    assert "When I call some step" in stepregistry.steps
-    assert "I do some stuff" in stepregistry.steps
-
-
-def test_getting_pattern_of_specific_func(stepregistry):
-    """
-    Test getting the pattern of a specific func
+    The global module-level step-Step decorators should register
+    a Step at the global registry instance
     """
     # given
-    def step_a():
-        pass
-
-    def step_b():
-        pass
-
-    def step_c():
-        pass
-
-    stepregistry.register("step_pattern_a", step_a)
-    stepregistry.register("step_pattern_b", step_b)
+    from radish.stepregistry import registry, step
 
     # when
-    pattern_a = stepregistry.get_pattern(step_a)
-    pattern_b = stepregistry.get_pattern(step_b)
-    pattern_c = stepregistry.get_pattern(step_c)
+    @step("pattern")
+    def step_step():
+        ...
 
     # then
-    assert pattern_a == "step_pattern_a"
-    assert pattern_b == "step_pattern_b"
-    assert pattern_c == "Unknown"
+    assert StepImpl("Step", "pattern", step_step) in registry.step_implementations(
+        "Step"
+    )
